@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Scripting</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#1e1e1e; --bg-alt:#252526; --bg-toolbar:#323233; --border:#3c3c3c;
+      --text:#d4d4d4; --accent:#0e639c; --accent-hover:#1177bb;
+      --success:#4ec9b0; --error:#f48771;
+    }
+    html, body { height:100%; font-family:'Segoe UI',system-ui,sans-serif;
+      background:var(--bg); color:var(--text); overflow:hidden; }
+    body { display:flex; flex-direction:column; }
+
+    .toolbar { display:flex; align-items:center; gap:12px; padding:8px 14px;
+      background:var(--bg-toolbar); border-bottom:1px solid var(--border); flex-shrink:0; }
+    .brand { display:flex; align-items:center; gap:6px; font-weight:600; font-size:15px; }
+    .brand .logo { color:#ffcb6b; font-size:18px; }
+    .toolbar-actions { display:flex; gap:6px; margin-left:auto; }
+    .btn { background:#3c3c3c; color:var(--text); border:1px solid var(--border);
+      border-radius:4px; padding:6px 12px; font-size:13px; cursor:pointer; transition:background .15s; }
+    .btn:hover { background:#4a4a4a; }
+    .btn.primary { background:var(--accent); border-color:var(--accent); }
+    .btn.primary:hover { background:var(--accent-hover); }
+    .filename-display { font-size:12px; color:#9d9d9d; background:#2d2d2d;
+      padding:4px 10px; border-radius:4px; font-family:monospace; }
+
+    .workspace { flex:1; display:flex; flex-direction:column; min-height:0; }
+    .editor-pane { flex:1; min-height:0; overflow:hidden; border-bottom:1px solid var(--border); }
+    #editor, .cm-editor { height:100%; }
+    .cm-editor { font-size:14px; }
+    .cm-scroller { font-family:'Consolas','Monaco',monospace; }
+
+    .console-pane { height:180px; display:flex; flex-direction:column;
+      background:#181818; flex-shrink:0; }
+    .console-header { display:flex; justify-content:space-between; align-items:center;
+      padding:6px 12px; font-size:12px; text-transform:uppercase; letter-spacing:.5px;
+      color:#9d9d9d; border-bottom:1px solid var(--border); }
+    .status-msg { font-size:11px; text-transform:none; letter-spacing:0; }
+    .status-msg.ok { color:var(--success); }
+    .status-msg.err { color:var(--error); }
+    .console-output { flex:1; overflow-y:auto; padding:10px 14px;
+      font-family:'Consolas',monospace; font-size:13px; white-space:pre-wrap; color:#ccc; }
+
+    .modal { position:fixed; inset:0; background:rgba(0,0,0,.6);
+      display:flex; align-items:center; justify-content:center; z-index:1000; }
+    .modal.hidden { display:none; }
+    .modal-content { background:var(--bg-alt); padding:22px; border-radius:8px;
+      width:420px; max-width:90vw; border:1px solid var(--border); }
+    .modal-content h3 { margin-bottom:14px; font-size:16px; }
+    .modal-content input { width:100%; padding:8px 10px; background:#1e1e1e;
+      border:1px solid var(--border); border-radius:4px; color:var(--text);
+      font-family:monospace; margin-bottom:12px; }
+    .modal-actions { display:flex; justify-content:flex-end; gap:8px; }
+    .file-list { list-style:none; max-height:300px; overflow-y:auto; margin-bottom:12px; }
+    .file-list li { padding:8px 10px; border-radius:4px; cursor:pointer;
+      display:flex; justify-content:space-between; font-size:13px; }
+    .file-list li:hover { background:#2d2d2d; }
+    .file-list li .del { color:var(--error); font-size:12px; }
+  </style>
+</head>
+<body>
+
+  <header class="toolbar">
+    <div class="brand"><span class="logo">⚡</span><span>Scripting</span></div>
+    <div class="toolbar-actions">
+      <button id="btnNew"   class="btn">📄 New</button>
+      <button id="btnOpen"  class="btn">📂 Open</button>
+      <button id="btnSave"  class="btn">💾 Save</button>
+      <button id="btnRun"   class="btn primary">▶ Run</button>
+      <button id="btnClear" class="btn">🧹 Clear</button>
+    </div>
+    <div class="filename-display" id="currentFile">untitled.js</div>
+  </header>
+
+  <main class="workspace">
+    <section class="editor-pane"><div id="editor"></div></section>
+    <section class="console-pane">
+      <div class="console-header">
+        <span>Console</span>
+        <span id="statusMsg" class="status-msg"></span>
+      </div>
+      <pre id="consoleOutput" class="console-output"></pre>
+    </section>
+  </main>
+
+  <div id="modalOpen" class="modal hidden">
+    <div class="modal-content">
+      <h3>Buka File</h3>
+      <ul id="fileList" class="file-list"></ul>
+      <div class="modal-actions"><button id="btnCloseModal" class="btn">Tutup</button></div>
+    </div>
+  </div>
+
+  <div id="modalSave" class="modal hidden">
+    <div class="modal-content">
+      <h3>Simpan File</h3>
+      <input type="text" id="inputFileName" placeholder="nama-file.js" />
+      <div class="modal-actions">
+        <button id="btnCancelSave"  class="btn">Batal</button>
+        <button id="btnConfirmSave" class="btn primary">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { EditorView, basicSetup } from "https://esm.sh/codemirror@6.0.1";
+    import { javascript }             from "https://esm.sh/@codemirror/lang-javascript@6.0.1";
+    import { oneDark }                from "https://esm.sh/@codemirror/theme-one-dark@6.1.2";
+    import { keymap }                 from "https://esm.sh/@codemirror/view@6.34.1";
+    import { indentWithTab }          from "https://esm.sh/@codemirror/commands@6.7.1";
+
+    const editorView = new EditorView({
+      doc: `// Selamat datang di Scripting ⚡
+// Ctrl/Cmd + S     → Simpan
+// Ctrl/Cmd + Enter → Jalankan
+
+function halo(nama) {
+  return "Halo, " + nama + "!";
+}
+
+console.log(halo("Scripting"));
+`,
+      extensions: [
+        basicSetup, javascript(), oneDark,
+        keymap.of([
+          indentWithTab,
+          { key: "Mod-s",     run: () => { openSaveModal(); return true; } },
+          { key: "Mod-Enter", run: () => { runCode();       return true; } }
+        ])
+      ],
+      parent: document.getElementById("editor")
+    });
+
+    const el = {
+      currentFile:   document.getElementById("currentFile"),
+      consoleOutput: document.getElementById("consoleOutput"),
+      statusMsg:     document.getElementById("statusMsg"),
+      modalOpen:     document.getElementById("modalOpen"),
+      modalSave:     document.getElementById("modalSave"),
+      fileList:      document.getElementById("fileList"),
+      inputFileName: document.getElementById("inputFileName")
+    };
+
+    const getCode = () => editorView.state.doc.toString();
+    const setCode = c => editorView.dispatch({
+      changes: { from: 0, to: editorView.state.doc.length, insert: c }
+    });
+    const setStatus = (msg, ok = true) => {
+      el.statusMsg.textContent = msg;
+      el.statusMsg.className = "status-msg " + (ok ? "ok" : "err");
+      setTimeout(() => el.statusMsg.textContent = "", 3000);
+    };
+    const log = (text, color = "") => {
+      const line = document.createElement("div");
+      if (color) line.style.color = color;
+      line.textContent = text;
+      el.consoleOutput.appendChild(line);
+      el.consoleOutput.scrollTop = el.consoleOutput.scrollHeight;
+    };
+    const clearConsole = () => el.consoleOutput.innerHTML = "";
+
+    function newFile() {
+      if (!confirm("Buat file baru? Perubahan belum disimpan akan hilang.")) return;
+      setCode("// File baru\n");
+      el.currentFile.textContent = "untitled.js";
+      setStatus("File baru dibuat");
+    }
+
+    function openSaveModal() {
+      el.inputFileName.value = el.currentFile.textContent;
+      el.modalSave.classList.remove("hidden");
+      el.inputFileName.focus();
+    }
+
+    function confirmSave() {
+      const name = el.inputFileName.value.trim();
+      if (!name) return alert("Masukkan nama file");
+      el.modalSave.classList.add("hidden");
+      setStatus("Menyimpan...");
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.success) {
+            el.currentFile.textContent = res.name;
+            setStatus(res.message, true);
+            log("✓ " + res.message, "#4ec9b0");
+          } else {
+            setStatus(res.message, false);
+            log("✗ " + res.message, "#f48771");
+          }
+        })
+        .withFailureHandler(err => setStatus("Gagal: " + err.message, false))
+        .saveFile(name, getCode());
+    }
+
+    function openOpenModal() {
+      el.fileList.innerHTML = "<li>Memuat...</li>";
+      el.modalOpen.classList.remove("hidden");
+      google.script.run
+        .withSuccessHandler(res => {
+          if (!res.success) return el.fileList.innerHTML = "<li>Error: " + res.message + "</li>";
+          if (!res.files.length) return el.fileList.innerHTML = "<li>Belum ada file tersimpan.</li>";
+          el.fileList.innerHTML = "";
+          res.files.forEach(f => {
+            const li = document.createElement("li");
+            li.innerHTML = `<span>${f.name}</span><span class="del" title="Hapus">🗑</span>`;
+            li.querySelector("span").onclick = () => loadFile(f.name);
+            li.querySelector(".del").onclick = e => {
+              e.stopPropagation();
+              if (confirm("Hapus " + f.name + "?")) deleteFile(f.name);
+            };
+            el.fileList.appendChild(li);
+          });
+        })
+        .withFailureHandler(err => el.fileList.innerHTML = "<li>Error: " + err.message + "</li>")
+        .listFiles();
+    }
+
+    function loadFile(name) {
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.success) {
+            setCode(res.content);
+            el.currentFile.textContent = res.name;
+            el.modalOpen.classList.add("hidden");
+            setStatus("File dimuat: " + res.name);
+          } else alert(res.message);
+        })
+        .withFailureHandler(err => alert("Error: " + err.message))
+        .loadFile(name);
+    }
+
+    function deleteFile(name) {
+      google.script.run
+        .withSuccessHandler(res => { setStatus(res.message, res.success); openOpenModal(); })
+        .deleteFile(name);
+    }
+
+    function runCode() {
+      clearConsole();
+      log("▶ Menjalankan kode...", "#569cd6");
+      google.script.run
+        .withSuccessHandler(res => {
+          if (res.output?.length) {
+            res.output.forEach(line => {
+              const isErr = line.startsWith("Exception") || line.startsWith("ERROR");
+              log(line, isErr ? "#f48771" : "#d4d4d4");
+            });
+          } else log("(tidak ada output)", "#808080");
+          setStatus(res.success ? "Selesai" : "Error", res.success);
+        })
+        .withFailureHandler(err => {
+          log("Runtime error: " + err.message, "#f48771");
+          setStatus("Gagal", false);
+        })
+        .runCode(getCode());
+    }
+
+    document.getElementById("btnNew")  .onclick = newFile;
+    document.getElementById("btnSave") .onclick = openSaveModal;
+    document.getElementById("btnOpen") .onclick = openOpenModal;
+    document.getElementById("btnRun")  .onclick = runCode;
+    document.getElementById("btnClear").onclick = clearConsole;
+    document.getElementById("btnConfirmSave").onclick = confirmSave;
+    document.getElementById("btnCancelSave") .onclick = () => el.modalSave.classList.add("hidden");
+    document.getElementById("btnCloseModal") .onclick = () => el.modalOpen.classList.add("hidden");
+    el.inputFileName.addEventListener("keydown", e => { if (e.key === "Enter") confirmSave(); });
+    document.querySelectorAll(".modal").forEach(m => {
+      m.addEventListener("click", e => { if (e.target === m) m.classList.add("hidden"); });
+    });
+
+    log("Scripting v1.0 siap digunakan.", "#4ec9b0");
+    log("Tekan Ctrl/Cmd + Enter untuk menjalankan kode.", "#808080");
+  </script>
+</body>
+</html>
